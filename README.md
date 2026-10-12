@@ -6,7 +6,9 @@ modules needed to implement our required functionality.
 
 # Updating the Pexip opentelemetry collector
 
-The key file is `manifest.yaml`.  Everything else should be treat as "throw-away"
+The key file is `manifest.yaml`.  Everything else should be treat as "throw-away".
+For examples of manifest files, see the upstream releases repository:
+https://github.com/open-telemetry/opentelemetry-collector-releases/tree/main/distributions
 
 You will need the `opentelemetry-collector-builder` package installed.  For
 newer versions of the collector, you may need to update the builder package
