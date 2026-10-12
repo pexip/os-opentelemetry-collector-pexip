@@ -1,0 +1,14 @@
+# Declare a Backstage Component that represents your application.
+---
+# yaml-language-server: $schema=https://json.schemastore.org/catalog-info.json
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: lunes
+  description: Lunes is a Go library for parsing localized time strings into time.Time
+
+spec:
+  type: library
+  owner: group:logstash
+  system: platform-ingest
+  lifecycle: production

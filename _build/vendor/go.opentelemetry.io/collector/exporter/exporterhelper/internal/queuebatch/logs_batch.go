@@ -1,0 +1,199 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package queuebatch // import "go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch"
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/request"
+	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/sizer"
+	"go.opentelemetry.io/collector/pdata/plog"
+)
+
+// MergeSplit splits and/or merges the provided logs request and the current request into one or more requests
+// conforming with the MaxSizeConfig.
+func (req *logsRequest) MergeSplit(_ context.Context, maxSize int, szt request.SizerType, r2 request.Request) ([]request.Request, error) {
+	var sz sizer.LogsSizer
+	switch szt {
+	case request.SizerTypeItems:
+		sz = &sizer.LogsCountSizer{}
+	case request.SizerTypeBytes:
+		sz = &sizer.LogsBytesSizer{}
+	default:
+		return nil, errors.New("unknown sizer type")
+	}
+	if r2 != nil {
+		req2, ok := r2.(*logsRequest)
+		if !ok {
+			return nil, errors.New("invalid input type")
+		}
+		req2.mergeTo(req, sz, szt)
+	}
+
+	// If no limit we can simply merge the new request into the current and return.
+	if maxSize == 0 {
+		return []request.Request{req}, nil
+	}
+
+	return req.split(maxSize, sz, szt)
+}
+
+func (req *logsRequest) mergeTo(dst *logsRequest, sz sizer.LogsSizer, szt request.SizerType) {
+	if sz != nil {
+		dst.sizes.Update(szt, dst.size(sz, szt)+req.size(sz, szt))
+		req.sizes.Update(szt, 0)
+	}
+	req.ld.ResourceLogs().MoveAndAppendTo(dst.ld.ResourceLogs())
+}
+
+func (req *logsRequest) split(maxSize int, sz sizer.LogsSizer, szt request.SizerType) ([]request.Request, error) {
+	if req.size(sz, szt) <= maxSize {
+		return []request.Request{req}, nil
+	}
+	var res []request.Request
+	droppedItems := 0
+	for req.size(sz, szt) > maxSize {
+		recordsBefore := req.ld.LogRecordCount()
+		ld, removedSize := extractLogs(req.ld, maxSize, sz)
+		if removedSize == 0 {
+			// Nothing left the source, so no progress is possible. Stop rather than loop.
+			return res, fmt.Errorf("request size is greater than max size and cannot be split further, dropping items: %d", droppedItems+req.ld.LogRecordCount())
+		}
+		req.sizes.Update(szt, req.size(sz, szt)-removedSize)
+		droppedItems += recordsBefore - req.ld.LogRecordCount() - ld.LogRecordCount()
+		if ld.LogRecordCount() > 0 {
+			res = append(res, newLogsRequest(ld))
+		}
+	}
+	// Splitting can leave nothing to export once oversized records and record-less resources are gone.
+	if req.ld.LogRecordCount() > 0 {
+		res = append(res, req)
+	}
+	if droppedItems > 0 {
+		return res, fmt.Errorf("single log record exceeds the max size limit, dropping items: %d", droppedItems)
+	}
+	return res, nil
+}
+
+// extractLogs extracts logs from the input logs and returns a new logs with the specified number of log records.
+func extractLogs(srcLogs plog.Logs, capacity int, sz sizer.LogsSizer) (plog.Logs, int) {
+	destLogs := plog.NewLogs()
+	capacityLeft := capacity - sz.LogsSize(destLogs)
+	removedSize := 0
+	srcLogs.ResourceLogs().RemoveIf(func(srcRL plog.ResourceLogs) bool {
+		// If the no more capacity left just return.
+		if capacityLeft == 0 {
+			return false
+		}
+		rawRlSize := sz.ResourceLogsSize(srcRL)
+		rlSize := sz.DeltaSize(rawRlSize)
+		if rlSize > capacityLeft {
+			extSrcRL, extRlSize := extractResourceLogs(srcRL, capacityLeft, capacity, sz)
+			// This cannot make it to exactly 0 for the bytes,
+			// force it to be 0 since that is the stopping condition.
+			capacityLeft = 0
+			removedSize += extRlSize
+			// There represents the delta between the delta sizes.
+			removedSize += rlSize - rawRlSize - (sz.DeltaSize(rawRlSize-extRlSize) - (rawRlSize - extRlSize))
+			// It is possible that for the bytes scenario, the extracted field contains no log records.
+			// Do not add it to the destination if that is the case.
+			if extSrcRL.ScopeLogs().Len() > 0 {
+				extSrcRL.MoveTo(destLogs.ResourceLogs().AppendEmpty())
+			}
+			if srcRL.ScopeLogs().Len() == 0 {
+				// Nothing is left in the source resource, so remove what remains of it too.
+				removedSize += sz.DeltaSize(rawRlSize - extRlSize)
+				return true
+			}
+			return false
+		}
+		capacityLeft -= rlSize
+		removedSize += rlSize
+		srcRL.MoveTo(destLogs.ResourceLogs().AppendEmpty())
+		return true
+	})
+	return destLogs, removedSize
+}
+
+// extractResourceLogs extracts resource logs and returns a new resource logs with the specified number of log records.
+func extractResourceLogs(srcRL plog.ResourceLogs, capacity, maxSize int, sz sizer.LogsSizer) (plog.ResourceLogs, int) {
+	destRL := plog.NewResourceLogs()
+	destRL.SetSchemaUrl(srcRL.SchemaUrl())
+	srcRL.Resource().CopyTo(destRL.Resource())
+	// Take into account that this can have max "capacity", so when added to the parent will need space for the extra delta size.
+	capacityLeft := capacity - (sz.DeltaSize(capacity) - capacity) - sz.ResourceLogsSize(destRL)
+	// Room for a scope in an otherwise empty batch, once this resource's header and attributes are paid for.
+	maxScopeSize := maxSize - (sz.DeltaSize(maxSize) - maxSize) - sz.ResourceLogsSize(destRL)
+	removedSize := 0
+	srcRL.ScopeLogs().RemoveIf(func(srcSL plog.ScopeLogs) bool {
+		// If the no more capacity left just return.
+		if capacityLeft == 0 {
+			return false
+		}
+		rawSlSize := sz.ScopeLogsSize(srcSL)
+		slSize := sz.DeltaSize(rawSlSize)
+		if slSize > capacityLeft {
+			extSrcSL, extSlSize := extractScopeLogs(srcSL, capacityLeft, maxScopeSize, sz)
+			// This cannot make it to exactly 0 for the bytes,
+			// force it to be 0 since that is the stopping condition.
+			capacityLeft = 0
+			removedSize += extSlSize
+			// There represents the delta between the delta sizes.
+			removedSize += slSize - rawSlSize - (sz.DeltaSize(rawSlSize-extSlSize) - (rawSlSize - extSlSize))
+			// It is possible that for the bytes scenario, the extracted field contains no log records.
+			// Do not add it to the destination if that is the case.
+			if extSrcSL.LogRecords().Len() > 0 {
+				extSrcSL.MoveTo(destRL.ScopeLogs().AppendEmpty())
+			}
+			if srcSL.LogRecords().Len() == 0 {
+				// Nothing is left in the source scope, so remove what remains of it too.
+				removedSize += sz.DeltaSize(rawSlSize - extSlSize)
+				return true
+			}
+			return false
+		}
+		capacityLeft -= slSize
+		removedSize += slSize
+		srcSL.MoveTo(destRL.ScopeLogs().AppendEmpty())
+		return true
+	})
+	return destRL, removedSize
+}
+
+// extractScopeLogs extracts scope logs and returns a new scope logs with the specified number of log records.
+func extractScopeLogs(srcSL plog.ScopeLogs, capacity, maxScopeSize int, sz sizer.LogsSizer) (plog.ScopeLogs, int) {
+	destSL := plog.NewScopeLogs()
+	destSL.SetSchemaUrl(srcSL.SchemaUrl())
+	srcSL.Scope().CopyTo(destSL.Scope())
+	// Take into account that this can have max "capacity", so when added to the parent will need space for the extra delta size.
+	capacityLeft := capacity - (sz.DeltaSize(capacity) - capacity) - sz.ScopeLogsSize(destSL)
+	// Largest log record that fits an otherwise empty batch, once the resource and scope headers and attributes are paid for.
+	maxRecordSize := maxScopeSize - (sz.DeltaSize(maxScopeSize) - maxScopeSize) - sz.ScopeLogsSize(destSL)
+	removedSize := 0
+	srcSL.LogRecords().RemoveIf(func(srcLR plog.LogRecord) bool {
+		// If the no more capacity left just return.
+		if capacityLeft == 0 {
+			return false
+		}
+		rlSize := sz.DeltaSize(sz.LogRecordSize(srcLR))
+		if rlSize > maxRecordSize {
+			// It can never be exported and would block every record behind it, so drop it.
+			removedSize += rlSize
+			return true
+		}
+		if rlSize > capacityLeft {
+			// This cannot make it to exactly 0 for the bytes,
+			// force it to be 0 since that is the stopping condition.
+			capacityLeft = 0
+			return false
+		}
+		capacityLeft -= rlSize
+		removedSize += rlSize
+		srcLR.MoveTo(destSL.LogRecords().AppendEmpty())
+		return true
+	})
+	return destSL, removedSize
+}
