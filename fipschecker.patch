@@ -1,0 +1,11 @@
+diff -Naur _build_orig/main.go _build/main.go
+--- _build_orig/main.go	2026-10-12 13:06:51.769443954 +0000
++++ _build/main.go	2026-10-12 13:07:26.213321894 +0000
+@@ -5,6 +5,7 @@
+ 
+ import (
+ 	"os"
++	_ "github.com/pexip/gofipschecker"
+ 
+ 	"go.opentelemetry.io/collector/component"
+ 	"go.opentelemetry.io/collector/confmap"

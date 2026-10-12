@@ -1,0 +1,24 @@
+#!/bin/bash
+
+export GOTOOLCHAIN=local
+export PATH=/usr/lib/go-1.26/bin:${PATH}
+
+set -e
+
+# Use OCB to prepare the source tree
+rm -fr _build
+ocb --skip-compilation --config=manifest.yaml
+cd _build
+
+# Apply our import patch to load the FIPS checker
+patch -Np1 -i ../fipschecker.patch
+go mod tidy
+
+# Vendor the modules
+go mod vendor
+cd ..
+
+# Perform some sanity checks
+grep fipschecker _build/main.go >/dev/null || echo "ERROR: FIPS checker import not found"
+grep fipschecker _build/go.mod >/dev/null || echo "ERROR: FIPS checker not found in go.mod"
+test -f _build/vendor/github.com/pexip/gofipschecker/gofipschecker.go || echo "ERROR: Pexip FIPS module is not vendored"
