@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenTelemetry Collector Pexip
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/opentelemetry-collector-pexip --config /etc/otelcol-pexip/otelcol-pexip.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=on-failure
+Type=simple
+User=otelcol-pexip
+Group=otelcol-pexip
+
+[Install]
+WantedBy=multi-user.target

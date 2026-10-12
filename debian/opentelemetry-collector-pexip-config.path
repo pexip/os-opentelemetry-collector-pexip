@@ -1,0 +1,10 @@
+[Unit]
+Description=Opentelemetry Collector config file (path monitor: otelcol-pexip.yaml)
+PartOf=opentelemetry-collector-pexip.service
+
+[Install]
+WantedBy=multi-user.target
+
+[Path]
+PathChanged=/etc/otelcol-pexip/otelcol-pexip.yaml
+Unit=opentelemetry-collector-pexip.service

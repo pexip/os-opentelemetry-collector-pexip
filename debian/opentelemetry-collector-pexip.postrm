@@ -1,0 +1,16 @@
+#!/bin/sh
+
+set -e
+
+#DEBHELPER#
+
+if [ "${1}" = "purge" ] ; then
+    # Remove otelcol-pexip user
+    if getent passwd otelcol-pexip >/dev/null; then
+        if [ -x "$(command -v deluser)" ]; then
+          deluser --quiet otelcol-pexip >/dev/null || true
+        fi
+    fi
+fi
+
+exit 0
