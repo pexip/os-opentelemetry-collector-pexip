@@ -1,0 +1,5 @@
+opentelemetry-collector-pexip (0.162.1pexip25u1) pexip-trixie; urgency=medium
+
+  * Initial release.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Mon, 12 Oct 2026 13:14:30 +0000

@@ -1,0 +1,16 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://github.com/pexip/os-opentelemetry-collector-pexip
+Upstream-Name: opentelemetry-collector-pexip
+Upstream-Contact: <preferred name and address to reach the upstream project>
+
+Files:
+ _build/*
+Copyright:
+ OpenTelemetry Authors
+License: Apache-2.0
+
+Files:
+ debian/*
+Copyright:
+ 2026 Pexip AS <packaging@pexip.com>
+License: Apache-2.0

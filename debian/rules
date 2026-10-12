@@ -1,0 +1,59 @@
+#!/usr/bin/make -f
+
+# See debhelper(7) (uncomment to enable).
+# Output every command that modifies files on the build system.
+#export DH_VERBOSE = 1
+
+
+GO_VERSION=1.26
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+
+override_dh_auto_build:
+	mkdir -p _out
+
+	@echo "Performing FIPS build"
+	cd _build && \
+		GOCACHE=$(CURDIR)/debian/.debhelper/go-build-fips \
+		GOPROXY=off \
+		GOPATH=$(CURDIR)/debian/.debhelper/go-path-fips \
+		PATH=/usr/lib/go-$(GO_VERSION)/bin:$${PATH} \
+		GOFIPS140=certified \
+		GOTOOLCHAIN=local \
+		http_proxy=127.0.0.1:9 \
+		https_proxy=127.0.0.9 \
+		go build -v && \
+	mv opentelemetry-collector-pexip ../_out/opentelemetry-collector-pexip.fips
+
+	@echo "Performing non=FIPS build"
+	cd _build && \
+		GOCACHE=$(CURDIR)/debian/.debhelper/go-build \
+		GOPROXY=off \
+		GOPATH=$(CURDIR)/debian/.debhelper/go-path \
+		PATH=/usr/lib/go-$(GO_VERSION)/bin:$${PATH} \
+		GOTOOLCHAIN=local \
+		http_proxy=127.0.0.1:9 \
+		https_proxy=127.0.0.9 \
+		go build -v && \
+	mv opentelemetry-collector-pexip ../_out/opentelemetry-collector-pexip
+
+override_dh_auto_test:
+
+
+override_dh_auto_clean:
+	# Various directories created by go tree end up without owner write
+	# permission.  This seems to be another terrible golang design decision
+	# (it's a long list).
+	find $(CURDIR)/debian/.debhelper/go-path -type d -exec chmod u+w {} \; || true
+	find $(CURDIR)/debian/.debhelper/go-path-fips -type d -exec chmod u+w {} \; || true
+	find $(CURDIR)/debian/.debhelper/go-build -type d -exec chmod u+w {} \; || true
+	find $(CURDIR)/debian/.debhelper/go-build-fips -type d -exec chmod u+w {} \; || true
+	dh_clean
+	rm -fr cmd/builder/ocb _out/
+
+
+override_dh_dwz:
