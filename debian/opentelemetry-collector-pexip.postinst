@@ -13,6 +13,10 @@ if [ "$1" = "configure" ] || [ "$1" = "reconfigure" ] ; then
                 --disabled-login \
                 otelcol-pexip
         fi
+
+	if [ ! -e /etc/otelcol-pexip ]; then
+		install -d -m0700 -o otelcol-pexip -g otelcol-pexip /etc/otelcol-pexip
+	fi
 fi
 
 #DEBHELPER#
